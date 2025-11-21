@@ -36,7 +36,7 @@
         .status { margin-top: 10px; font-weight: bold; padding: 10px; border-radius: 5px; display: none; }
         .status.success { background-color: #d4edda; color: #155724; display: block; }
         .status.error { background-color: #f8d7da; color: #721c24; display: block; }
-        .status.loading { background-color: #e2e3e5; color: #383d41; display: block; }
+        .status.loading { background-color: #fff3cd; color: #856404; display: block; }
 
         .table-container { overflow-x: auto; background: white; box-shadow: 0 0 20px rgba(0,0,0,0.1); border-radius: 8px; }
         table { width: 100%; border-collapse: collapse; min-width: 800px; }
@@ -90,59 +90,73 @@
     <script>
         let currentFileSha = null;
 
-        // --- AUTOMATISK START ---
-        window.onload = () => {
-            // 1. Fyll i fälten från minnet
-            ['ghUsername', 'ghRepo', 'ghToken'].forEach(id => {
-                if(localStorage.getItem(id)) document.getElementById(id).value = localStorage.getItem(id);
-            });
+        // --- INITIERING OCH AUTOSTART ---
+        document.addEventListener('DOMContentLoaded', () => {
+            // 1. Hämta värden från LocalStorage
+            const savedUser = localStorage.getItem('ghUsername');
+            const savedRepo = localStorage.getItem('ghRepo');
+            const savedToken = localStorage.getItem('ghToken');
+            const savedFile = localStorage.getItem('ghFilename') || 'data.csv';
 
-            // 2. Kontrollera om vi har tillräckligt med info för att autoladda
-            const user = document.getElementById('ghUsername').value;
-            const repo = document.getElementById('ghRepo').value;
-            const token = document.getElementById('ghToken').value;
+            // 2. Fyll i fälten visuellt
+            if(savedUser) document.getElementById('ghUsername').value = savedUser;
+            if(savedRepo) document.getElementById('ghRepo').value = savedRepo;
+            if(savedToken) document.getElementById('ghToken').value = savedToken;
+            document.getElementById('ghFilename').value = savedFile;
 
-            if(user && repo && token) {
-                showStatus("Ansluter till GitHub och hämtar data...", "loading");
-                loadFromGitHub(); // Kör funktionen direkt
+            // 3. Om vi har alla nödvändiga uppgifter, kör igång!
+            if(savedUser && savedRepo && savedToken) {
+                showStatus("Autostart: Hämtar data från GitHub...", "loading");
+                // Vi skickar med parametrarna direkt för att slippa läsa från DOM om den laggar
+                loadDataInternal(savedUser, savedRepo, savedFile, savedToken);
             }
-        };
+        });
 
         function showStatus(msg, type) {
             const el = document.getElementById('statusMsg');
             el.innerText = msg;
             el.className = 'status ' + type;
-            // Dölj meddelandet efter 5 sekunder om det inte är ett fel
-            if (type !== 'error') {
-                setTimeout(() => { el.style.display = 'none'; }, 5000);
+            if (type === 'success') {
+                setTimeout(() => { el.style.display = 'none'; }, 4000);
             }
         }
 
-        // --- 1. HÄMTA DATA ---
-        async function loadFromGitHub() {
+        // Wrapper-funktion för knappen
+        function loadFromGitHub() {
             const user = document.getElementById('ghUsername').value;
             const repo = document.getElementById('ghRepo').value;
             const file = document.getElementById('ghFilename').value;
             const token = document.getElementById('ghToken').value;
+            
+            if(!user || !repo || !token) return showStatus("Fyll i alla uppgifter!", "error");
+            
+            showStatus("Hämtar data...", "loading");
+            loadDataInternal(user, repo, file, token);
+        }
 
-            if(!user || !repo || !token) return showStatus("Fyll i alla uppgifter för att hämta data!", "error");
-
-            // Spara till nästa gång
+        // --- KÄRNFUNKTION FÖR ATT HÄMTA DATA ---
+        async function loadDataInternal(user, repo, file, token) {
+            // Spara alltid senaste försöket
             localStorage.setItem('ghUsername', user);
             localStorage.setItem('ghRepo', repo);
             localStorage.setItem('ghToken', token);
+            localStorage.setItem('ghFilename', file);
 
             const url = `https://api.github.com/repos/${user}/${repo}/contents/${file}`;
 
             try {
-                // Lägg till en tidsstämpel i URL:en för att undvika att webbläsaren cachar gammal data
+                // Anti-cache parameter
                 const noCacheUrl = url + "?t=" + new Date().getTime();
                 
                 const response = await fetch(noCacheUrl, {
                     headers: { 'Authorization': `token ${token}`, 'Accept': 'application/vnd.github.v3+json' }
                 });
 
-                if (!response.ok) throw new Error("Kunde inte hitta filen eller fel token.");
+                if (!response.ok) {
+                    if(response.status === 404) throw new Error("Filen hittades inte. Kontrollera repo-namn och filnamn.");
+                    if(response.status === 401) throw new Error("Behörighet saknas. Kontrollera din Token.");
+                    throw new Error("Fel vid hämtning (Kod " + response.status + ")");
+                }
 
                 const data = await response.json();
                 currentFileSha = data.sha; 
@@ -150,7 +164,7 @@
                 const decodedContent = new TextDecoder("utf-8").decode(Uint8Array.from(atob(data.content), c => c.charCodeAt(0)));
                 
                 if (!decodedContent || decodedContent.trim().length === 0) {
-                    showStatus("Filen på GitHub är tom. Redo för inmatning.", "success");
+                    showStatus("Filen är tom, men anslutningen fungerar.", "success");
                     return; 
                 }
 
@@ -159,11 +173,11 @@
 
             } catch (error) {
                 console.error(error);
-                showStatus("Fel vid hämtning: " + error.message, "error");
+                showStatus("Fel: " + error.message, "error");
             }
         }
 
-        // --- 2. PARSA CSV ---
+        // --- PARSA CSV ---
         function parseCSV(csvText) {
             const rows = csvText.split('\n').filter(row => row.trim() !== "");
             const tableHead = document.getElementById('headerRow');
@@ -172,6 +186,7 @@
             if (rows.length > 0) {
                 tableBody.innerHTML = ""; 
                 
+                // Hantera rubriker
                 const headerCells = rows[0].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(c => c.replace(/^"|"$/g, '').trim());
                 
                 if(headerCells.length > 1) {
@@ -186,6 +201,7 @@
                     tableHead.appendChild(thAction);
                 }
 
+                // Hantera rader
                 for (let i = 1; i < rows.length; i++) {
                     const cells = rows[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(c => c.replace(/^"|"$/g, '').trim());
                     createNewRow(cells);
@@ -193,7 +209,7 @@
             }
         }
 
-        // --- 3. SKAPA RAD ---
+        // --- SKAPA RAD ---
         function createNewRow(cellsData = []) {
             const tr = document.createElement('tr');
             const targetColCount = 7; 
@@ -231,13 +247,19 @@
             window.scrollTo(0, document.body.scrollHeight);
         }
 
-        // --- 4. SPARA ---
+        // --- SPARA ---
         async function saveToGitHub() {
             const user = document.getElementById('ghUsername').value;
             const repo = document.getElementById('ghRepo').value;
             const file = document.getElementById('ghFilename').value;
             const token = document.getElementById('ghToken').value;
 
+            // Spara uppgifter ifall man bara klickade spara direkt
+            localStorage.setItem('ghUsername', user);
+            localStorage.setItem('ghRepo', repo);
+            localStorage.setItem('ghToken', token);
+
+            // Försök hämta SHA om den saknas (t.ex. vid omstart av sida utan att data hämtats)
             if (!currentFileSha) {
                 try {
                     const checkUrl = `https://api.github.com/repos/${user}/${repo}/contents/${file}`;
@@ -247,7 +269,7 @@
                         currentFileSha = checkData.sha;
                     }
                 } catch(e) {
-                    return showStatus("Kunde inte verifiera filen. Uppdatera sidan.", "error");
+                    // Ignorera fel här, vi får felmeddelandet i nästa steg ändå
                 }
             }
 
