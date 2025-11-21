@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub CSV Editor</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background-color: #f4f4f9; padding: 20px; color: #333; }
+        .config-panel { background: #fff; padding: 15px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+        input { padding: 8px; border: 1px solid #ccc; border-radius: 4px; width: 90%; }
+        label { font-size: 0.85em; font-weight: bold; display: block; margin-bottom: 3px; }
+        button { padding: 10px 15px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; color: white; }
+        .btn-load { background-color: #f39c12; }
+        .btn-save { background-color: #2980b9; }
+        .btn-add { background-color: #27ae60; margin-bottom: 10px; }
+        .btn-delete { background-color: #c0392b; font-size: 12px; padding: 5px 10px; }
+        .status { margin-top: 10px; font-weight: bold; padding: 10px; border-radius: 5px; display: none; }
+        .status.success { background-color: #d4edda; color: #155724; display: block; }
+        .status.error { background-color: #f8d7da; color: #721c24; display: block; }
+        table { width: 100%; border-collapse: collapse; background: white; box-shadow: 0 0 20px rgba(0,0,0,0.1); }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background-color: #2c3e50; color: white; }
+        td[contenteditable="true"]:focus { background-color: #eef; outline: 2px solid #2980b9; }
+    </style>
+</head>
+<body>
+
+    <h1>Redigera data på GitHub</h1>
+
+    <div class="config-panel">
+        <div>
+            <label>GitHub Användarnamn:</label>
+            <input type="text" id="ghUsername" placeholder="t.ex. dittNamn">
+        </div>
+        <div>
+            <label>Repository Namn:</label>
+            <input type="text" id="ghRepo" placeholder="t.ex. min-app">
+        </div>
+        <div>
+            <label>Filnamn (CSV):</label>
+            <input type="text" id="ghFilename" value="data.csv">
+        </div>
+        <div>
+            <label>Personal Access Token (PAT):</label>
+            <input type="password" id="ghToken" placeholder="ghp_...">
+        </div>
+        <div style="display:flex; align-items:flex-end;">
+            <button class="btn-load" onclick="loadFromGitHub()">Hämta Data</button>
+            <button class="btn-save" onclick="saveToGitHub()" style="margin-left: 10px;">Spara ändringar</button>
+        </div>
+    </div>
+
+    <div id="statusMsg" class="status"></div>
+
+    <button class="btn-add" onclick="addRow()">+ Lägg till rad</button>
+
+    <div style="overflow-x:auto;">
+        <table id="dataTable">
+            <thead>
+                <tr id="headerRow">
+                    </tr>
+            </thead>
+            <tbody id="tableBody"></tbody>
+        </table>
+    </div>
+
+    <script>
+        // Variabel för att spara filens "SHA" (krävs av GitHub för att kunna skriva över filen)
+        let currentFileSha = "";
+
+        // Ladda inställningar från LocalStorage om de finns
+        window.onload = () => {
+            if(localStorage.getItem('ghUsername')) document.getElementById('ghUsername').value = localStorage.getItem('ghUsername');
+            if(localStorage.getItem('ghRepo')) document.getElementById('ghRepo').value = localStorage.getItem('ghRepo');
+            if(localStorage.getItem('ghToken')) document.getElementById('ghToken').value = localStorage.getItem('ghToken');
+        };
+
+        function showStatus(msg, type) {
+            const el = document.getElementById('statusMsg');
+            el.innerText = msg;
+            el.className = 'status ' + type;
+            setTimeout(() => { el.className = 'status'; el.style.display = 'none'; }, 5000);
+        }
+
+        // 1. HÄMTA DATA FRÅN GITHUB
+        async function loadFromGitHub() {
+            const user = document.getElementById('ghUsername').value;
+            const repo = document.getElementById('ghRepo').value;
+            const file = document.getElementById('ghFilename').value;
+            const token = document.getElementById('ghToken').value;
+
+            if(!user || !repo || !token) { showStatus("Fyll i alla GitHub-uppgifter!", "error"); return; }
+
+            // Spara uppgifter i webbläsaren så man slipper skriva in dem nästa gång
+            localStorage.setItem('ghUsername', user);
+            localStorage.setItem('ghRepo', repo);
+            localStorage.setItem('ghToken', token);
+
+            const url = `https://api.github.com/repos/${user}/${repo}/contents/${file}`;
+
+            try {
+                const response = await fetch(url, {
+                    headers: { 'Authorization': `token ${token}`, 'Accept': 'application/vnd.github.v3+json' }
+                });
+
+                if (!response.ok) throw new Error(`Kunde inte hämta filen (Status: ${response.status})`);
+
+                const data = await response.json();
+                currentFileSha = data.sha; // Spara SHA för att kunna uppdatera senare
+
+                // GitHub skickar innehållet i Base64. Vi måste avkoda det med stöd för svenska tecken.
+                const decodedContent = new TextDecoder("utf-8").decode(Uint8Array.from(atob(data.content), c => c.charCodeAt(0)));
+                
+                parseCSV(decodedContent);
+                showStatus("Data laddad från GitHub!", "success");
+
+            } catch (error) {
+                console.error(error);
+                showStatus("Fel vid laddning: " + error.message, "error");
+            }
+        }
+
+        // 2. PARSA CSV TILL TABELL
+        function parseCSV(csvText) {
+            const rows = csvText.split('\n').filter(row => row.trim() !== "");
+            const tableHead = document.getElementById('headerRow');
+            const tableBody = document.getElementById('tableBody');
+            
+            tableHead.innerHTML = "";
+            tableBody.innerHTML = "";
+
+            rows.forEach((row, index) => {
+                // Enkel CSV-split (hanterar inte kommatecken inuti celler perfekt, men fungerar för enkel data)
+                // För mer robust lösning krävs en regex-parser.
+                const cells = row.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(cell => cell.replace(/^"|"$/g, '').trim());
+
+                if (index === 0) {
+                    // Skapa rubriker
+                    cells.forEach(cell => {
+                        const th = document.createElement('th');
+                        th.innerText = cell;
+                        tableHead.appendChild(th);
+                    });
+                    const thAction = document.createElement('th');
+                    thAction.innerText = "Åtgärd";
+                    tableHead.appendChild(thAction);
+                } else {
+                    createNewRow(cells);
+                }
+            });
+        }
+
+        // 3. SKAPA RAD
+        function createNewRow(cellsData = []) {
+            const tr = document.createElement('tr');
+            const headerCount = document.getElementById('headerRow').children.length - 1; // -1 för Åtgärdsknappen
+            
+            // Om ingen data skickas, fyll med tomma strängar
+            if (cellsData.length === 0) {
+                for(let i=0; i<headerCount; i++) cellsData.push("");
+            }
+
+            cellsData.forEach(cellText => {
+                const td = document.createElement('td');
+                td.contentEditable = "true";
+                td.innerText = cellText;
+                tr.appendChild(td);
+            });
+
+            // Lägg till raderingsknapp
+            const tdAction = document.createElement('td');
+            const btn = document.createElement('button');
+            btn.innerText = "Ta bort";
+            btn.className = "btn-delete";
+            btn.onclick = () => tr.remove();
+            tdAction.appendChild(btn);
+            tr.appendChild(tdAction);
+
+            document.getElementById('tableBody').appendChild(tr);
+        }
+
+        function addRow() {
+            createNewRow();
+        }
+
+        // 4. SPARA TILL GITHUB
+        async function saveToGitHub() {
+            if (!currentFileSha) { showStatus("Du måste ladda data från GitHub först!", "error"); return; }
+
+            const user = document.getElementById('ghUsername').value;
+            const repo = document.getElementById('ghRepo').value;
+            const file = document.getElementById('ghFilename').value;
+            const token = document.getElementById('ghToken').value;
+            const url = `https://api.github.com/repos/${user}/${repo}/contents/${file}`;
+
+            // Bygg CSV-sträng från tabellen
+            let csvContent = "";
+            
+            // Rubriker
+            const headers = Array.from(document.querySelectorAll('#headerRow th'));
+            const headerTexts = headers.slice(0, -1).map(th => th.innerText); // Ta bort "Åtgärd"
+            csvContent += headerTexts.join(",") + "\n";
+
+            // Rader
+            const rows = document.querySelectorAll('#tableBody tr');
+            rows.forEach(row => {
+                const cells = Array.from(row.querySelectorAll('td'));
+                const cellTexts = cells.slice(0, -1).map(td => {
+                    let text = td.innerText.replace(/"/g, '""'); // Hantera citattecken
+                    if (text.includes(',') || text.includes('\n')) text = `"${text}"`;
+                    return text;
+                });
+                csvContent += cellTexts.join(",") + "\n";
+            });
+
+            // Koda till Base64 med stöd för svenska tecken
+            const utf8Bytes = new TextEncoder().encode(csvContent);
+            const base64Content = btoa(String.fromCharCode(...utf8Bytes));
+
+            const payload = {
+                message: "Uppdatering via webbapp",
+                content: base64Content,
+                sha: currentFileSha // Viktigt! Vi måste skicka med SHA för filen vi ersätter
+            };
+
+            try {
+                const response = await fetch(url, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `token ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    const errData = await response.json();
+                    throw new Error(errData.message);
+                }
+
+                const data = await response.json();
+                currentFileSha = data.content.sha; // Uppdatera SHA för nästa sparning
+                showStatus("Filen sparades framgångsrikt till GitHub!", "success");
+
+            } catch (error) {
+                console.error(error);
+                showStatus("Kunde inte spara: " + error.message, "error");
+            }
+        }
+    </script>
+</body>
+</html>
