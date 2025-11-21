@@ -6,13 +6,12 @@
     <title>GitHub CSV Editor</title>
     <style>
         body { 
-            font-family: 'Segoe UI', sans-serif; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
             background-color: #f4f4f9; 
             padding: 20px; 
             color: #333; 
         }
         
-        /* Kontrollpanelen */
         .config-panel { 
             background: #fff; 
             padding: 15px; 
@@ -23,10 +22,10 @@
             gap: 10px; 
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
         }
+        
         input { padding: 8px; border: 1px solid #ccc; border-radius: 4px; width: 90%; }
         label { font-size: 0.85em; font-weight: bold; display: block; margin-bottom: 3px; }
         
-        /* Knappar */
         button { padding: 10px 15px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; color: white; transition: opacity 0.2s; }
         button:hover { opacity: 0.9; }
         .btn-load { background-color: #f39c12; }
@@ -34,36 +33,19 @@
         .btn-add { background-color: #27ae60; margin-bottom: 10px; }
         .btn-delete { background-color: #c0392b; font-size: 12px; padding: 5px 10px; }
 
-        /* Statusmeddelanden */
         .status { margin-top: 10px; font-weight: bold; padding: 10px; border-radius: 5px; display: none; }
         .status.success { background-color: #d4edda; color: #155724; display: block; }
         .status.error { background-color: #f8d7da; color: #721c24; display: block; }
 
-        /* Tabellstilar */
         .table-container { overflow-x: auto; background: white; box-shadow: 0 0 20px rgba(0,0,0,0.1); border-radius: 8px; }
         table { width: 100%; border-collapse: collapse; min-width: 800px; }
-        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; vertical-align: top;}
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; vertical-align: top; }
         th { background-color: #2c3e50; color: white; position: sticky; top: 0; }
         
-        /* Gör att man ser var man kan skriva även om cellen är tom */
-        td[contenteditable="true"] {
-            min-width: 100px;
-            min-height: 20px;
-            cursor: text;
-        }
-        
-        /* Markera cellen man redigerar */
-        td[contenteditable="true"]:focus { 
-            background-color: #eef; 
-            outline: 2px solid #2980b9; 
-            border-radius: 3px;
-        }
-        /* Hover-effekt på celler */
-        td[contenteditable="true"]:hover {
-            background-color: #f9f9f9;
-            box-shadow: inset 0 0 0 1px #ddd; 
-        }
-
+        td[contenteditable="true"] { min-width: 100px; cursor: text; }
+        td[contenteditable="true"]:empty::before { content: "Skriv här..."; color: #ccc; font-style: italic; font-size: 0.8em; }
+        td[contenteditable="true"]:focus::before { content: ""; }
+        td[contenteditable="true"]:focus { background-color: #eef; outline: 2px solid #2980b9; }
         tr:hover { background-color: #fafafa; }
     </style>
 </head>
@@ -72,22 +54,10 @@
     <h1>Redigera data på GitHub</h1>
 
     <div class="config-panel">
-        <div>
-            <label>GitHub Användarnamn:</label>
-            <input type="text" id="ghUsername" placeholder="t.ex. dittNamn">
-        </div>
-        <div>
-            <label>Repository Namn:</label>
-            <input type="text" id="ghRepo" placeholder="t.ex. min-app">
-        </div>
-        <div>
-            <label>Filnamn (CSV):</label>
-            <input type="text" id="ghFilename" value="data.csv">
-        </div>
-        <div>
-            <label>Personal Access Token (PAT):</label>
-            <input type="password" id="ghToken" placeholder="ghp_...">
-        </div>
+        <div><label>Användarnamn:</label><input type="text" id="ghUsername"></div>
+        <div><label>Repo:</label><input type="text" id="ghRepo"></div>
+        <div><label>Filnamn:</label><input type="text" id="ghFilename" value="data.csv"></div>
+        <div><label>Token:</label><input type="password" id="ghToken"></div>
         <div style="display:flex; align-items:flex-end;">
             <button class="btn-load" onclick="loadFromGitHub()">Hämta Data</button>
             <button class="btn-save" onclick="saveToGitHub()" style="margin-left: 10px;">Spara ändringar</button>
@@ -117,29 +87,30 @@
     </div>
 
     <script>
-        let currentFileSha = "";
+        let currentFileSha = null;
 
+        // Ladda sparade uppgifter vid start
         window.onload = () => {
-            if(localStorage.getItem('ghUsername')) document.getElementById('ghUsername').value = localStorage.getItem('ghUsername');
-            if(localStorage.getItem('ghRepo')) document.getElementById('ghRepo').value = localStorage.getItem('ghRepo');
-            if(localStorage.getItem('ghToken')) document.getElementById('ghToken').value = localStorage.getItem('ghToken');
+            ['ghUsername', 'ghRepo', 'ghToken'].forEach(id => {
+                if(localStorage.getItem(id)) document.getElementById(id).value = localStorage.getItem(id);
+            });
         };
 
         function showStatus(msg, type) {
             const el = document.getElementById('statusMsg');
             el.innerText = msg;
             el.className = 'status ' + type;
-            setTimeout(() => { el.className = 'status'; el.style.display = 'none'; }, 5000);
+            setTimeout(() => { el.style.display = 'none'; }, 6000);
         }
 
-        // --- 1. LÄS FRÅN GITHUB ---
+        // --- 1. HÄMTA DATA ---
         async function loadFromGitHub() {
             const user = document.getElementById('ghUsername').value;
             const repo = document.getElementById('ghRepo').value;
             const file = document.getElementById('ghFilename').value;
             const token = document.getElementById('ghToken').value;
 
-            if(!user || !repo || !token) { showStatus("Fyll i alla GitHub-uppgifter!", "error"); return; }
+            if(!user || !repo || !token) return showStatus("Fyll i alla uppgifter!", "error");
 
             localStorage.setItem('ghUsername', user);
             localStorage.setItem('ghRepo', repo);
@@ -152,38 +123,47 @@
                     headers: { 'Authorization': `token ${token}`, 'Accept': 'application/vnd.github.v3+json' }
                 });
 
-                if (!response.ok) throw new Error(`Kunde inte hämta filen (Status: ${response.status})`);
+                if (!response.ok) throw new Error("Kunde inte hitta filen. Kontrollera uppgifterna.");
 
                 const data = await response.json();
                 currentFileSha = data.sha; 
 
+                // Avkoda UTF-8 korrekt
                 const decodedContent = new TextDecoder("utf-8").decode(Uint8Array.from(atob(data.content), c => c.charCodeAt(0)));
                 
+                // Om filen är tom, rensa inte rubrikerna!
+                if (!decodedContent || decodedContent.trim().length === 0) {
+                    showStatus("Filen på GitHub är tom. Du kan börja lägga till rader nu.", "success");
+                    return; 
+                }
+
                 parseCSV(decodedContent);
-                showStatus("Data laddad från GitHub!", "success");
+                showStatus("Data laddad!", "success");
 
             } catch (error) {
                 console.error(error);
-                showStatus("Fel vid laddning: " + error.message, "error");
+                showStatus("Fel: " + error.message, "error");
             }
         }
 
-        // --- 2. BYGG TABELL ---
+        // --- 2. PARSA CSV ---
         function parseCSV(csvText) {
             const rows = csvText.split('\n').filter(row => row.trim() !== "");
             const tableHead = document.getElementById('headerRow');
             const tableBody = document.getElementById('tableBody');
-            
-            tableHead.innerHTML = "";
-            tableBody.innerHTML = "";
 
-            rows.forEach((row, index) => {
-                // Hanterar CSV-split lite bättre
-                const cells = row.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(cell => cell.replace(/^"|"$/g, '').trim());
-
-                if (index === 0) {
-                    // Bygg rubriker dynamiskt baserat på filen
-                    cells.forEach(cell => {
+            // Rensa bara om vi faktiskt har data att fylla på med
+            if (rows.length > 0) {
+                tableBody.innerHTML = ""; 
+                // Obs: Vi raderar INTE headerRow här om vi inte måste.
+                // Vi antar att första raden i CSV är headers om den finns.
+                
+                const headerCells = rows[0].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(c => c.replace(/^"|"$/g, '').trim());
+                
+                // Uppdatera headers BARA om CSVn faktiskt har headers
+                if(headerCells.length > 1) {
+                    tableHead.innerHTML = "";
+                    headerCells.forEach(cell => {
                         const th = document.createElement('th');
                         th.innerText = cell;
                         tableHead.appendChild(th);
@@ -191,27 +171,28 @@
                     const thAction = document.createElement('th');
                     thAction.innerText = "Åtgärd";
                     tableHead.appendChild(thAction);
-                } else {
+                }
+
+                // Skapa rader (hoppa över första raden som är header)
+                for (let i = 1; i < rows.length; i++) {
+                    const cells = rows[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(c => c.replace(/^"|"$/g, '').trim());
                     createNewRow(cells);
                 }
-            });
+            }
         }
 
-        // --- 3. SKAPA NY RAD ---
+        // --- 3. SKAPA RAD (FIXAD) ---
         function createNewRow(cellsData = []) {
             const tr = document.createElement('tr');
-            const headerRow = document.getElementById('headerRow');
             
-            // Räkna antalet kolumner (minus Åtgärd-kolumnen)
-            // Om headerRow är tom (borde inte hända med standard-HTML), sätt default till 7
-            let colCount = headerRow.children.length > 0 ? headerRow.children.length - 1 : 7;
+            // Hårdkodad säkerhet: Vi vill ha 7 kolumner (för din data)
+            const targetColCount = 7; 
 
-            // Om ingen data skickas (klick på "Lägg till rad"), skapa tomma strängar
+            // Om vi fick data (från laddning), använd den. Annars skapa tomma strängar.
             if (cellsData.length === 0) {
-                for(let i=0; i<colCount; i++) cellsData.push("");
+                for(let i=0; i<targetColCount; i++) cellsData.push("");
             }
 
-            // Skapa celler
             cellsData.forEach(cellText => {
                 const td = document.createElement('td');
                 td.contentEditable = "true";
@@ -219,8 +200,8 @@
                 tr.appendChild(td);
             });
 
-            // Om CSVn hade färre kolumner än rubrikerna, fyll på med tomma celler
-            while(tr.children.length < colCount) {
+            // Om datan hade för få kolumner, fyll ut med tomma
+            while(tr.children.length < targetColCount) {
                 const td = document.createElement('td');
                 td.contentEditable = "true";
                 tr.appendChild(td);
@@ -239,58 +220,67 @@
         }
 
         function addRow() {
-            // Kontrollera att vi har rubriker, annars varna
-            const headerRow = document.getElementById('headerRow');
-            if (headerRow.children.length === 0) {
-                showStatus("Kunde inte avgöra kolumner. Ladda data först.", "error");
-                return;
-            }
             createNewRow();
-            // Scrolla ner till nya raden
             window.scrollTo(0, document.body.scrollHeight);
         }
 
-        // --- 4. SPARA ---
+        // --- 4. SPARA (FIXAD UTF-8) ---
         async function saveToGitHub() {
-            if (!currentFileSha) { 
-                // Försök hämta SHA om användaren bara vill spara utan att ha laddat först (riskabelt, men vi försöker hämta infon först)
-                 showStatus("Du måste ladda data från GitHub först för att få rätt behörighet!", "error"); 
-                 return; 
-            }
-
             const user = document.getElementById('ghUsername').value;
             const repo = document.getElementById('ghRepo').value;
             const file = document.getElementById('ghFilename').value;
             const token = document.getElementById('ghToken').value;
-            const url = `https://api.github.com/repos/${user}/${repo}/contents/${file}`;
+
+            if (!currentFileSha) {
+                // Försök hämta SHA först ifall användaren glömt ladda
+                try {
+                    const checkUrl = `https://api.github.com/repos/${user}/${repo}/contents/${file}`;
+                    const checkResp = await fetch(checkUrl, { headers: { 'Authorization': `token ${token}` } });
+                    if(checkResp.ok) {
+                        const checkData = await checkResp.json();
+                        currentFileSha = checkData.sha;
+                    }
+                } catch(e) {
+                    return showStatus("Ladda data först så vi vet vilken fil som ska sparas!", "error");
+                }
+            }
 
             let csvContent = "";
             
-            // Rubriker
+            // Hämta headers
             const headers = Array.from(document.querySelectorAll('#headerRow th'));
+            // Ta bort sista (Åtgärd)
             const headerTexts = headers.slice(0, -1).map(th => th.innerText);
             csvContent += headerTexts.join(",") + "\n";
 
-            // Rader
+            // Hämta rader
             const rows = document.querySelectorAll('#tableBody tr');
             rows.forEach(row => {
                 const cells = Array.from(row.querySelectorAll('td'));
-                const cellTexts = cells.slice(0, -1).map(td => {
-                    let text = td.innerText.replace(/"/g, '""');
-                    if (text.includes(',') || text.includes('\n')) text = `"${text}"`;
-                    return text;
-                });
-                csvContent += cellTexts.join(",") + "\n";
+                // Ta bort sista cellen (knappen)
+                if(cells.length > 0) {
+                    const cellTexts = cells.slice(0, -1).map(td => {
+                        let text = td.innerText.replace(/"/g, '""'); 
+                        // Tvinga citattecken om det finns kommatecken eller nyrad
+                        if (text.includes(',') || text.includes('\n') || text.includes(';')) text = `"${text}"`;
+                        return text;
+                    });
+                    csvContent += cellTexts.join(",") + "\n";
+                }
             });
 
+            // Konvertera strängen till UTF-8 Base64 säkert för GitHub
             const utf8Bytes = new TextEncoder().encode(csvContent);
-            const base64Content = btoa(String.fromCharCode(...utf8Bytes));
+            // Använd en hack-metod för att konvertera Uint8Array till sträng som btoa gillar
+            const base64Content = btoa(Array.from(utf8Bytes, byte => String.fromCharCode(byte)).join(''));
 
             const payload = {
-                message: "Uppdatering via webbapp",
+                message: "Uppdaterad via webbapp",
                 content: base64Content,
                 sha: currentFileSha
             };
+
+            const url = `https://api.github.com/repos/${user}/${repo}/contents/${file}`;
 
             try {
                 const response = await fetch(url, {
@@ -299,18 +289,15 @@
                     body: JSON.stringify(payload)
                 });
 
-                if (!response.ok) {
-                    const errData = await response.json();
-                    throw new Error(errData.message);
-                }
+                if (!response.ok) throw new Error((await response.json()).message);
 
                 const data = await response.json();
                 currentFileSha = data.content.sha; 
-                showStatus("Sparat till GitHub!", "success");
+                showStatus("Sparat! Filen uppdaterades framgångsrikt.", "success");
 
             } catch (error) {
                 console.error(error);
-                showStatus("Fel vid sparning: " + error.message, "error");
+                showStatus("Kunde inte spara: " + error.message, "error");
             }
         }
     </script>
